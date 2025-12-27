@@ -1,21 +1,15 @@
 # ===============================
-# PHASE 4 — PRODUCTION WSGI (GUNICORN) + CLEAN ARCHITECTURE
+# FINAL MEXC TELEGRAM TRADING BOT
 # ===============================
-# What changed in Phase 4:
-# ✔ Removed ngrok (production does NOT use it)
-# ✔ Flask app exposed as WSGI app for gunicorn
-# ✔ Trading loop runs in background thread safely
-# ✔ Webhook URL is STATIC (set once)
-# ✔ Clear separation: config / app / trading
-#
-# HOW YOU RUN THIS IN PRODUCTION:
-# 1) Expose server with real HTTPS (Cloudflare, Nginx, Railway, Render, VPS)
-# 2) Set webhook ONCE:
-#    https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://YOUR_DOMAIN/<TOKEN>
-# 3) Start bot:
-#    gunicorn -w 1 -b 0.0.0.0:5000 bot:app
+# INCLUDES ALL UPGRADES:
+# 1️⃣ REAL AUTHENTICATED MEXC BUY / SELL ORDERS
+# 2️⃣ TRAILING STOP LOSS
+# 3️⃣ PER-SYMBOL STATE TRACKING (NO MISSED LISTINGS)
+# 4️⃣ /positions TELEGRAM COMMAND
+# 5️⃣ SQLITE PERSISTENCE (SURVIVES RESTART)
+# 6️⃣ PRODUCTION-READY (WSGI / CLOUD)
 
-print("MEXC BOT STARTING — PHASE 4 (PRODUCTION)")
+print("MEXC BOT STARTING — FINAL VERSION")
 
 import os
 import time
@@ -42,7 +36,7 @@ BASE_URL = "https://api.mexc.com"
 
 INTERVAL = "1m"
 CANDLE_LIMIT = 5
-CHECK_INTERVAL = 20
+CHECK_INTERVAL = 15
 PRICE_CHECK_INTERVAL = 5
 SELL_TIMEOUT = 7 * 60
 TRAIL_PERCENT = 0.15
@@ -52,7 +46,7 @@ TARGET_MULTIPLIER = 10.0
 bot_running = True
 
 # ===============================
-# 2. DATABASE
+# 2. DATABASE (POSITIONS)
 # ===============================
 conn = sqlite3.connect("positions.db", check_same_thread=False)
 cur = conn.cursor()
@@ -86,7 +80,7 @@ def send_telegram(text, chat_id=None):
         print("Telegram error:", e)
 
 # ===============================
-# 4. MEXC HELPERS
+# 4. MEXC AUTH HELPERS
 # ===============================
 
 def sign(params):
@@ -110,7 +104,7 @@ def mexc_post(path, params):
     return requests.post(BASE_URL + path, params=params, headers=headers).json()
 
 # ===============================
-# 5. TRADING ACTIONS
+# 5. REAL TRADING ACTIONS
 # ===============================
 
 def market_buy(symbol):
@@ -156,10 +150,10 @@ def market_sell(symbol, reason):
     cur.execute("DELETE FROM positions WHERE symbol=?", (symbol,))
     conn.commit()
 
-    send_telegram(f"🔴 SELL EXECUTED ({reason})\n{symbol}\n{data}")
+    send_telegram(f"🔴 SELL EXECUTED ({reason})\n{symbol}")
 
 # ===============================
-# 6. FLASK APP (WSGI)
+# 6. TELEGRAM WEBHOOK
 # ===============================
 app = Flask(__name__)
 
@@ -231,12 +225,11 @@ def telegram_webhook():
     return "OK"
 
 # ===============================
-# 7. BACKGROUND TRADER
+# 7. TRADING LOOP (NO MISSED TOKENS)
 # ===============================
 
 def trading_loop():
-    known = set()
-    send_telegram("✅ PHASE 4 BOT LIVE (PRODUCTION)")
+    send_telegram("✅ FINAL BOT LIVE")
 
     while True:
         if not bot_running:
@@ -248,15 +241,13 @@ def trading_loop():
             time.sleep(5)
             continue
 
-        symbols = {
-            s["symbol"] for s in info["symbols"]
-            if s["status"] == "TRADING" and s["symbol"].endswith("USDT")
-        }
+        symbols = [s["symbol"] for s in info["symbols"] if s["status"] == "TRADING" and s["symbol"].endswith("USDT")]
 
-        new = symbols - known
-        known = symbols
+        for symbol in symbols:
+            exists = cur.execute("SELECT 1 FROM positions WHERE symbol=?", (symbol,)).fetchone()
+            if exists:
+                continue
 
-        for symbol in new:
             candles = mexc_get("/api/v3/klines", {
                 "symbol": symbol,
                 "interval": INTERVAL,
@@ -285,6 +276,6 @@ def trading_loop():
         time.sleep(CHECK_INTERVAL)
 
 # ===============================
-# 8. THREAD START (gunicorn-safe)
+# 8. START BACKGROUND THREAD
 # ===============================
 threading.Thread(target=trading_loop, daemon=True).start()
